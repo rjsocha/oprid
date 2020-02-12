@@ -1,8 +1,6 @@
-IMG=oprid/niginx
-VER=1.0
-
 all: build
-
+IMG=oprid/dns
+VER=1.0
 build:
 	@docker build -t ${IMG}:${VER} -f Dockerfile ..
 	@docker tag ${IMG}:${VER} ${IMG}:latest
@@ -10,3 +8,4 @@ build:
 push:
 	@docker push ${IMG}:${VER}
 	@docker push ${IMG}:latest
+

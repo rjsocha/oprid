@@ -1,0 +1,51 @@
+#!/bin/bash
+WATCHDIR="/bus/nginx"
+function change_vhost() {
+local _reload=0
+    for vhost in $(find /bus/nginx -name "*.conf" -type f)
+    do
+        if [[ -s $vhost ]]
+        then
+            vh=$(basename $vhost)
+            mv -f $vhost /vhost/
+            echo "Activating ${vh%.conf}"
+            _reload=1
+        else
+           rm -f "$vhost"
+           echo "Skipping empty file: $vhost"
+        fi
+    done
+    if [[ $_reload -eq 1 ]]
+    then
+        if nginx -t
+        then
+            echo "NGINX: reload"
+            nginx -s reload
+        else
+            echo "NGINX: reconfiguration failed"
+        fi
+   fi
+}
+if [[ -z "$(getent hosts manager)" ]]
+then
+	echo "No oprid/manager"
+	exit 1
+fi
+_count=0
+echo "NGINX: waiting"
+while [[  "$(socat tcp:manager:3000 - 2>/dev/null)" != "OK" ]]
+do
+	_count=$(expr $_count + 1)
+	sleep 0.5
+done
+echo "NGINX: starting"
+nginx
+change_vhost
+while read event object
+do
+    if [[ -n $object ]] && [[ $event == "CLOSE_WRITE,CLOSE" ]] && [[ $object == ".nginx" ]]
+    then
+        change_vhost
+    fi
+done < <(inotifywait -m -q -e CLOSE_WRITE,CLOSE --format '%e %f' ${WATCHDIR})
+# vim: set tabstop=4 shiftwidth=4 expandtab autoindent indentexpr= nosmartindent :

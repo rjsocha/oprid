@@ -1,0 +1,78 @@
+#!/bin/bash
+DATADIR="/www"
+DNS_IP=${PUBLISH_IP:-127.0.0.1}
+
+function generate_vhost() {
+    sed -e "s/#VHOST#/$1/g" /template/$2 >/state/$1.conf.new
+    mv /state/$1.conf.new /bus/nginx/
+    mv /bus/nginx/$1.conf.new /bus/nginx/$1.conf
+}
+
+function change_vhost() {
+local _dir _suffix _vhost _template
+    tell_nginx=0
+    find /bus/dns -type f -delete
+    for _dir in $(find $DATADIR -mindepth 1 -maxdepth 1 -type d -printf "%f\n")
+    do
+        if [[ $_dir =~ \. ]]
+        then
+            _suffix="${_dir##*.}"
+            _template="plain"
+            if [[ -f /template/${_suffix} ]]
+            then
+                _template="${_suffix}"
+                _vhost="${_dir%.${_suffix}}"
+            else
+                _vhost="$_dir"
+            fi
+            echo "Vhost: ${_vhost} Template: ${_template}"
+            generate_vhost "${_vhost}" "${_template}"
+            echo "${DNS_IP} ${_vhost}" >/bus/dns/${_vhost}
+            tell_nginx=1
+        fi
+    done
+    [[ $tell_nginx -eq 0 ]] || echo "$(date +%s)+$(</proc/sys/kernel/random/uuid)+$RANDOM" >/bus/nginx/.nginx
+}
+function refresh_vhost() {
+    echo "REFRESH: $1"
+}
+
+echo "OPRID/Manger 1.0"
+echo "Preparing environment."
+
+mkdir -p /bus/php || true
+mkdir -p /bus/dns || true
+mkdir -p /bus/nginx || true
+mkdir -p /state || true
+
+# Cleanup
+echo "Cleaning up..."
+find /bus/php -type f -delete
+find /bus/dns -type f -delete
+find /bus/nginx -type f -delete
+
+echo "Generating vhosts"
+change_vhost
+
+# We are ready!
+socat TCP-LISTEN:3000,reuseaddr,fork EXEC:"printf OK" </dev/null >/dev/null 2>/dev/null &
+
+while read event dir
+do
+    
+    if [[ -n $dir ]] && [[ $event =~ ,ISDIR$ ]]
+    then
+        case $event in
+            ATTRIB,ISDIR)
+                refresh_vhost "$dir"
+                ;;
+            CREATE,ISDIR|MOVED_FROM,ISDIR|MOVED_TO,ISDIR|DELETE,ISDIR)
+                change_vhost 
+                ;;
+              *)
+                :
+                #echo OTHER EVENT: e: $event dir: $dir
+        esac
+    fi
+done < <(inotifywait -m -q --format '%e %f' ${DATADIR})
+# vim: set tabstop=4 shiftwidth=4 expandtab autoindent indentexpr= nosmartindent :

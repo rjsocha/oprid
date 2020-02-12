@@ -1,0 +1,16 @@
+#!/bin/sh
+if [[ -z "$(getent hosts manager)" ]]
+then
+	echo "No oprid/manager"
+	exit 1
+fi
+echo "DNS: waiting"
+_count=0
+while [[  "$(socat tcp:manager:3000 - 2>/dev/null)" != "OK" ]]
+do
+	_count=$(expr $_count + 1)
+	sleep 0.5
+done
+echo "DNS: starting"
+unbound
+exec dnsmasq -k

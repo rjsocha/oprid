@@ -1,0 +1,15 @@
+#!/bin/bash
+if [[ -z $(getent hosts manager) ]]
+then
+	echo "No oprid/manager"
+	exit 1
+fi
+echo "PHP: waiting"
+_count=0
+while [[ $(socat tcp:manager:3000 - 2>/dev/null) != "OK" ]]
+do
+	((_count++)) || true
+	sleep 0.5
+done
+echo "PHP: Starting"
+exec /usr/local/bin/docker-php-entrypoint php-fpm
