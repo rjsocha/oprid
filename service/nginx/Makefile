@@ -1,4 +1,4 @@
-IMG=oprid/niginx
+IMG=oprid/nginx
 VER=1.0
 
 all: build
