@@ -1,11 +1,67 @@
 #!/bin/bash
 DATADIR="/www"
-DNS_IP=${PUBLISH_IP:-127.0.0.1}
+DNS_IP=${OPRID_PUBLISH_IP:-127.0.0.1}
+
+function _trim() {
+local _var="$1"
+    # remove leading whitespace characters
+    _var="${_var#"${_var%%[![:space:]]*}"}"
+    # remove trailing whitespace characters
+    _var="${_var%"${_var##*[![:space:]]}"}"
+    echo -n "${_var}"
+}
 
 function generate_vhost() {
-    sed -e "s/#VHOST#/$1/g" /template/$2 >/state/$1.conf.new
-    mv /state/$1.conf.new /bus/nginx/
-    mv /bus/nginx/$1.conf.new /bus/nginx/$1.conf
+local _vh="$1" 
+local _err _e _ngaccess
+    _catch_all=""
+    _ngaccess=0
+    declare -A _err
+    if [[ -f $DATADIR/${_vh}/.ngaccess ]]
+    then
+        echo "Processing .ngaccess for ${_vh}"
+        shopt -s nocasematch
+        while read ng
+        do
+            if [[ $ng =~ ^# ]]
+            then
+                continue
+            elif [[ $ng =~ ^catch-all\  ]]
+            then
+                set -- $ng
+                _catch_all="$2"
+                _ngaccess=1
+            elif [[ $ng =~ ^catch(-index)?$ ]]
+            then
+                _catch_all="/index.php\$is_args\$args"
+                _ngaccess=1
+            elif [[ $ng =~ ^err(or)?\  ]]
+            then
+                set -- $ng
+                _err[$2]="$3"
+                _ngaccess=1
+            else
+                echo ".ngaccess unknow command: $ng"
+            fi
+        done <"$DATADIR/${_vh}/.ngaccess"
+        shopt -u nocasematch
+    fi
+    if [[ -z $_catch_all ]]
+    then
+      _catch_all="=404"
+    fi
+    _catch_all="${_catch_all//\//\\/}"
+    sed -e "s/#VHOST#/${_vh}/g" -e "s/#CATCHALL#/${_catch_all}/g" /template/ngaccess >/state/${_vh}.conf
+    for _e in ${!_err[@]}
+    do
+        _pattern="${_err[$_e]}"
+        _pattern="${_pattern//\//\\/}"
+        sed -i -e "/#ERROR_ID/a \ error_page $_e = $_pattern;" /state/${_vh}.conf
+    done
+    # TODO: Add testing option for the config here 
+    #cat /state/${_vh}.conf
+    unset _err
+    mv /state/${_vh}.conf /bus/nginx/${_vh}.conf
 }
 
 function change_vhost() {
@@ -16,25 +72,19 @@ local _dir _suffix _vhost _template
     do
         if [[ $_dir =~ \. ]]
         then
-            _suffix="${_dir##*.}"
-            _template="plain"
-            if [[ -f /template/${_suffix} ]]
-            then
-                _template="${_suffix}"
-                _vhost="${_dir%.${_suffix}}"
-            else
-                _vhost="$_dir"
-            fi
-            echo "Vhost: ${_vhost} Template: ${_template}"
-            generate_vhost "${_vhost}" "${_template}"
+            _vhost="${_dir}"
+            echo "Preparing: ${_vhost}"
+            generate_vhost "${_vhost}" 
             echo "${DNS_IP} ${_vhost}" >/bus/dns/${_vhost}
             tell_nginx=1
         fi
     done
     [[ $tell_nginx -eq 0 ]] || echo "$(date +%s)+$(</proc/sys/kernel/random/uuid)+$RANDOM" >/bus/nginx/.nginx
 }
+
 function refresh_vhost() {
     echo "REFRESH: $1"
+    change_vhost
 }
 
 echo "OPRID/Manger 1.0"
@@ -43,6 +93,8 @@ echo "Preparing environment."
 mkdir -p /bus/php || true
 mkdir -p /bus/dns || true
 mkdir -p /bus/nginx || true
+mkdir -p /bus/log || true
+chown www-data:www-data /bus/log
 mkdir -p /state || true
 
 # Cleanup
@@ -50,6 +102,7 @@ echo "Cleaning up..."
 find /bus/php -type f -delete
 find /bus/dns -type f -delete
 find /bus/nginx -type f -delete
+find /bus/log -type f -delete
 
 echo "Generating vhosts"
 change_vhost
@@ -59,8 +112,8 @@ socat TCP-LISTEN:3000,reuseaddr,fork EXEC:"printf OK" </dev/null >/dev/null 2>/d
 
 while read event dir
 do
-    
-    if [[ -n $dir ]] && [[ $event =~ ,ISDIR$ ]]
+    #echo $event dir: $dir
+    if [[ $event =~ ,ISDIR$ ]]
     then
         case $event in
             ATTRIB,ISDIR)

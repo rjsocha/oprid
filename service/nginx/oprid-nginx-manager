@@ -39,7 +39,13 @@ do
 	sleep 0.5
 done
 echo "NGINX: starting"
-nginx
+if [[ -n $OPRID_NGINX_DEBUG ]] && [[ $OPRID_NGINX_DEBUG == "yes" ]]
+then
+    mv -f /etc/nginx/error_log-debug.conf /etc/nginx/error_log.conf
+    nginx-debug
+else
+    nginx
+fi
 change_vhost
 while read event object
 do
